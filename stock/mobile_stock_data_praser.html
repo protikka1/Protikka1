@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Data Parser</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom font for a clean look */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Ensure textarea and output div are scrollable if content overflows */
+        textarea, #output {
+            overflow-y: auto;
+            white-space: pre-wrap; /* Preserve whitespace and wrap text */
+            word-wrap: break-word; /* Break long words */
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-100 to-purple-100 min-h-screen flex flex-col items-center p-4">
+
+    <div class="bg-white p-6 rounded-xl shadow-lg w-full max-w-md md:max-w-xl lg:max-w-2xl">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">
+            Stock Data Parser
+        </h1>
+
+        <p class="text-gray-600 text-center mb-6">
+            Paste your raw stock transaction data below.
+            The tool will extract Company Name, Share Price, and Total for two different patterns.
+        </p>
+
+        <div class="mb-4">
+            <label for="rawData" class="block text-gray-700 text-sm font-semibold mb-2">
+                Your Raw Data (e.g., 1900 rows)
+            </label>
+            <textarea
+                id="rawData"
+                rows="15"
+                class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-800 text-sm resize-y"
+                placeholder="Paste your data here, like:
+AT&T Limit Sell
+Brokerage Apt 11
+$230
+90 Share @ 6.56
+$790
+Brokerage ,Apt 11
+8x8 inc Limit Buy
+"
+            ></textarea>
+        </div>
+
+        <button
+            id="processButton"
+            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
+        >
+            <svg class="inline-block w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            Process Data
+        </button>
+
+        <div class="mt-6">
+            <label for="output" class="block text-gray-700 text-sm font-semibold mb-2">
+                Processed Data (CSV Format)
+            </label>
+            <div
+                id="output"
+                class="w-full p-3 bg-gray-50 border border-gray-300 rounded-lg text-gray-800 text-sm min-h-[150px] max-h-[400px] overflow-y-auto"
+            >
+                Company Name,Share Price,Total ($)
+            </div>
+            <button
+                id="copyButton"
+                class="mt-3 w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75"
+            >
+                <svg class="inline-block w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m-4 4H9m6 0a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                Copy to Clipboard
+            </button>
+        </div>
+
+        <div id="messageBox" class="mt-4 p-3 rounded-lg text-white text-center hidden"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const rawDataTextarea = document.getElementById('rawData');
+            const processButton = document.getElementById('processButton');
+            const outputDiv = document.getElementById('output');
+            const copyButton = document.getElementById('copyButton');
+            const messageBox = document.getElementById('messageBox');
+
+            // Function to display messages (instead of alert())
+            function showMessage(message, type = 'info') {
+                messageBox.textContent = message;
+                messageBox.classList.remove('hidden', 'bg-red-500', 'bg-green-500', 'bg-blue-500');
+                if (type === 'error') {
+                    messageBox.classList.add('bg-red-500');
+                } else if (type === 'success') {
+                    messageBox.classList.add('bg-green-500');
+                } else {
+                    messageBox.classList.add('bg-blue-500');
+                }
+                setTimeout(() => {
+                    messageBox.classList.add('hidden');
+                }, 3000); // Hide after 3 seconds
+            }
+
+            processButton.addEventListener('click', () => {
+                const rawData = rawDataTextarea.value;
+                if (!rawData.trim()) {
+                    showMessage("Please paste some data to process.", "error");
+                    return;
+                }
+
+                const lines = rawData.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+                const transactions = [];
+
+                let i = 0;
+                while (i < lines.length) {
+                    let companyName = 'N/A';
+                    let total = 'N/A';
+                    let sharePrice = 'N/A'; // Default to N/A for cases where it's not present
+
+                    // --- Attempt to identify Pattern 2: Shares first (4-line block) ---
+                    // Expected: Line 1: Shares and Share Price (e.g., "90 Share at 1 Share cost")
+                    // Check if current line contains "Share" and has enough subsequent lines for Pattern 2
+                    if (lines[i].includes("Share") && (i + 3 < lines.length)) {
+                        const shareLine = lines[i];
+                        // Extract share quantity (group 1) and optional share price (group 2)
+                        const shareMatch = shareLine.match(/(\d+)\s+Share(?:\s+(?:@|at)\s+\$?(\d+\.\d+))?/);
+
+                        if (shareMatch) { // If a share pattern is confirmed
+                            // shareQuantity = shareMatch[1]; // Not requested in output, but captured
+                            sharePrice = shareMatch[2] || 'N/A'; // Use captured price or N/A if not found
+
+                            // Line 2: Total
+                            const totalLine = lines[i + 1];
+                            const totalMatch = totalLine.match(/\$(\d+)/);
+                            total = totalMatch ? totalMatch[1] : 'N/A';
+
+                            // Line 3: Brokerage, Date (not extracted to output, but part of block)
+                            // const brokerageDateLine = lines[i + 2];
+
+                            // Line 4: Company Name
+                            const companyLine = lines[i + 3];
+                            const companyMatch = companyLine.match(/(.+?)(?: Limit (?:Buy|Sell))?$/);
+                            companyName = companyMatch ? companyMatch[1].trim() : companyLine.trim();
+
+                            transactions.push([companyName, sharePrice, total]);
+                            i += 4; // Move past this 4-line block
+                            continue; // Go to next iteration
+                        }
+                    }
+
+                    // --- Attempt to identify Pattern 1: Company Name first (3-line block) ---
+                    // Expected: Line 1: Company Name (Limit Buy/Sell)
+                    // Check if current line contains "Limit Buy" or "Limit Sell" and has enough subsequent lines for Pattern 1
+                    if ((lines[i].includes("Limit Buy") || lines[i].includes("Limit Sell")) && (i + 2 < lines.length)) {
+                        const companyLine = lines[i];
+                        const companyMatch = companyLine.match(/(.+?)(?: Limit (?:Buy|Sell))?$/);
+                        companyName = companyMatch ? companyMatch[1].trim() : companyLine.trim();
+
+                        // Line 2: Brokerage, Date (not extracted to output, but part of block)
+                        // const brokerageDateLine = lines[i + 1];
+
+                        // Line 3: Total
+                        const totalLine = lines[i + 2];
+                        const totalMatch = totalLine.match(/\$(\d+)/);
+                        total = totalMatch ? totalMatch[1] : 'N/A';
+
+                        transactions.push([companyName, 'N/A', total]); // Share price is N/A for this type
+                        i += 3; // Move past this 3-line block
+                        continue; // Go to next iteration
+                    }
+
+                    // If neither pattern matched, or not enough lines for a full block,
+                    // just advance to the next line to avoid infinite loops on malformed data.
+                    // This line will effectively skip any lines that don't fit the defined patterns.
+                    i++;
+                }
+
+                // Format as CSV
+                let csvOutput = "Company Name,Share Price,Total ($)\n";
+                transactions.forEach(row => {
+                    // Ensure each item is properly quoted and escaped for CSV
+                    csvOutput += row.map(item => `"${String(item).replace(/"/g, '""')}"`).join(',') + "\n";
+                });
+                outputDiv.textContent = csvOutput;
+                showMessage("Data processed successfully!", "success");
+            });
+
+            copyButton.addEventListener('click', () => {
+                const textToCopy = outputDiv.textContent;
+                if (!textToCopy.trim() || textToCopy.trim() === "Company Name,Share Price,Total ($)") {
+                    showMessage("No data to copy. Please process data first.", "error");
+                    return;
+                }
+
+                // Use document.execCommand('copy') for better compatibility in iframes/mobile browsers
+                const tempTextArea = document.createElement('textarea');
+                tempTextArea.value = textToCopy;
+                document.body.appendChild(tempTextArea);
+                tempTextArea.select();
+                try {
+                    document.execCommand('copy');
+                    showMessage("Copied to clipboard!", "success");
+                } catch (err) {
+                    showMessage("Failed to copy. Please copy manually.", "error");
+                } finally {
+                    document.body.removeChild(tempTextArea);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
+
